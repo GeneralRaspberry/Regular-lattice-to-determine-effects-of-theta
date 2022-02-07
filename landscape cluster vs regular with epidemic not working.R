@@ -93,6 +93,7 @@ theta <- 40
 b <- 1
 area.host<-1
 infbegin<-1
+iter<-5
 
 ##################################add a timer##############################################################
 
@@ -109,10 +110,12 @@ lambdaParent<-.05
 lambdaDaughter<-25
 randmod<-0
 
-
-
+tempbind<-c()
 sim_par <- function(i=NULL){
-
+for (l in 1:(length(betavalues)*iter)){
+  print(l)
+  
+for (j in betavalues){
 
 rExt=radiusCluster; #extension parameter -- use cluster radius
 xDeltaExt=dim+rExt;
@@ -189,18 +192,24 @@ data <- data.frame(x=landscape2$x, y=landscape2$y, id=1:hosts)
 
 set.seed(seed=NULL)
 marks(landscape2)<- sample(c(rep(TRUE,infbegin), rep(FALSE, hosts-infbegin)))
-tempbind<-c()
-for (j in betavalues){
+
+
 output <- tauLeapG(beta = j, theta = theta, b = b,
                    sigma = 0, delta.t = delta.t,
                    ppp = landscape2)
 
 temp <- output[[2]][,1:2][order(output[[2]][,2]),]
-temp<-cbind(temp,beta=j)
+temp<-cbind(temp,beta=j,sim=l)
 tempbind<-rbind(tempbind,temp)
-tempbinddata<-data.frame(tempbind)
+l<-l+1
 }
-datatest1<-data.frame(time=tempbinddata$time, who=tempbinddata$who, x=landscape2$x[tempbinddata$who], y=landscape2$y[tempbinddata$who],beta=tempbinddata$beta,sim=i)}
+}
+
+datatest1<-data.frame(time=tempbind$time, who=tempbind$who, x=landscape2$x[tempbind$who], y=landscape2$y[tempbind$who],beta=tempbind$beta,sim=tempbind$sim)
+
+
+
+}
 
 
 
@@ -213,7 +222,7 @@ clusterCall(cl,function() library("tidyverse"))
 ## export all to the nodes, that's dirty, so run this with a clean environement otherwise your memory will be flooded
 clusterExport(cl=cl, varlist=ls())
 ## call the function in a parallel lapply
-par_results <- parLapply(1:50, fun=sim_par, cl=cl) ## test with 10 first, but then replace 10 by 1000
+par_results <- parLapply(1, fun=sim_par, cl=cl) ## test with 10 first, but then replace 10 by 1000
 ## stop the cluster
 stopCluster(cl)
 ## call cbind on your list of lines to find the matrix you expect
@@ -230,8 +239,11 @@ t2<- proc.time()
 head(data)
 data<-data.frame(data)
 times <- sort(unique(data$time))
+
+tapply(data$beta,data$sim,unique)
+
 data_logistic <- function(i=NULL){
-  data %>% group_by(sim) %>% group_by(beta) %>%
+  data  %>% group_by(sim) %>%
     do(data.frame(time=times, infected=sapply(times, function(x) sum(.$time <= x))))
 }
 ## make a logistic df from this data
@@ -241,6 +253,7 @@ clusterExport(cl=cl, varlist=c("data","times"),envir = environment())
 par_data_logistic<-parLapply(1,fun=data_logistic,cl=cl)
 stopCluster(cl)
 data_log<-data.frame(par_data_logistic)
+
 
 
 ## prepare a logistic function of r to fit
