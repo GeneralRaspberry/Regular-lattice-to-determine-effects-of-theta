@@ -9,6 +9,7 @@ library("ggplot2")
 library("ggthemes")
 library("RColorBrewer")
 library("beepr")
+library("reshape2")
 ## tau-leap Gillespie algorithm function
 tauLeapG <- function(beta, # transmission rate
                      theta, # dispersal scale
@@ -83,12 +84,12 @@ tauLeapG <- function(beta, # transmission rate
 
 
 ## meta parameters
-delta.t <- 100 # time step (ALEX-THIS IS BIGGER THAN THE EXPERIMENT BELOW BECAUSE IT IS TAKING SO MUCH LONGER!)
+delta.t <- 1000 # time step (ALEX-THIS IS BIGGER THAN THE EXPERIMENT BELOW BECAUSE IT IS TAKING SO MUCH LONGER!)
 
 ## epidemic parameters
 
-beta <- 15##The data I sent you, which is called data in R is the 1000 realisations of these parameters
-theta <- 89
+betavalues <- c(5,10,20)##The data I sent you, which is called data in R is the 1000 realisations of these parameters
+theta <- 40
 b <- 1
 area.host<-1
 infbegin<-1
@@ -188,14 +189,18 @@ data <- data.frame(x=landscape2$x, y=landscape2$y, id=1:hosts)
 
 set.seed(seed=NULL)
 marks(landscape2)<- sample(c(rep(TRUE,infbegin), rep(FALSE, hosts-infbegin)))
-
-output <- tauLeapG(beta = beta, theta = theta, b = b,
+tempbind<-c()
+for (j in betavalues){
+output <- tauLeapG(beta = j, theta = theta, b = b,
                    sigma = 0, delta.t = delta.t,
                    ppp = landscape2)
-temp <- output[[2]][,1:2][order(output[[2]][,2]),]
 
-data.frame(time=temp$time, who=temp$who, x=landscape2$x[temp$who], y=landscape2$y[temp$who],sim=i) ## what it exports will be concatenated in a list
+temp <- output[[2]][,1:2][order(output[[2]][,2]),]
+temp<-cbind(temp,beta=j)
+tempbind<-rbind(tempbind,temp)
+tempbinddata<-data.frame(tempbind)
 }
+datatest1<-data.frame(time=tempbinddata$time, who=tempbinddata$who, x=landscape2$x[tempbinddata$who], y=landscape2$y[tempbinddata$who],beta=tempbinddata$beta,sim=i)}
 
 
 
@@ -208,18 +213,64 @@ clusterCall(cl,function() library("tidyverse"))
 ## export all to the nodes, that's dirty, so run this with a clean environement otherwise your memory will be flooded
 clusterExport(cl=cl, varlist=ls())
 ## call the function in a parallel lapply
-par_results <- parLapply(1:1000, fun=sim_par, cl=cl) ## test with 10 first, but then replace 10 by 1000
+par_results <- parLapply(1:50, fun=sim_par, cl=cl) ## test with 10 first, but then replace 10 by 1000
 ## stop the cluster
 stopCluster(cl)
 ## call cbind on your list of lines to find the matrix you expect
 data <- do.call("rbind", par_results)
+
 
 ##################################add a timer############################################################
 proc.end<-proc.time()-ts
 proc.end
 beep()
 
+t2<- proc.time()
 
+head(data)
+data<-data.frame(data)
+times <- sort(unique(data$time))
+data_logistic <- function(i=NULL){
+  data %>% group_by(sim) %>% group_by(beta) %>%
+    do(data.frame(time=times, infected=sapply(times, function(x) sum(.$time <= x))))
+}
+## make a logistic df from this data
+cl <- makeCluster(mc <- getOption("cl.cores", 3))
+clusterCall(cl,function() library("dplyr"))
+clusterExport(cl=cl, varlist=c("data","times"),envir = environment())
+par_data_logistic<-parLapply(1,fun=data_logistic,cl=cl)
+stopCluster(cl)
+data_log<-data.frame(par_data_logistic)
+
+
+## prepare a logistic function of r to fit
+temp <- filter(data_log, infected < 1000)
+temp$simdigit<-as.numeric(temp$sim)
+
+logis <- function(t, r, K=1, s=0, q0){
+  pmin(
+    K*q0*exp(r*(t+s)) / (K + q0*(exp(r*(t+s)) - 1)),
+    K) # numerical errors can happen for high r and sigma
+}
+
+
+r_calculate<-function(i=NULL){
+  
+  eval <- function(r, df){
+    sum((logis(r=r, t=df$time, K=1000, q0=1) - df$infected)^2) ## sum of square errors between predictions and observations
+  }
+  
+  # sapply(unique(temp$sim), 
+  #               function(i) optimize(f = eval, interval = c(0, 0.5), df=filter(temp, sim==i))$minimum)
+  r <- sapply(unique(temp), 
+              function(i) optimize(f = eval, interval = c(0, .05), df=filter(temp, sim==i))$minimum)
+}
+#another cluster
+cl <- makeCluster(mc <- getOption("cl.cores", 3))
+clusterCall(cl,function() library("dplyr"))
+clusterExport(cl=cl, varlist=c("temp","logis"),envir = environment())
+par_r<-parLapply(1,fun=r_calculate,cl=cl)
+stopCluster(cl)
 
 
 
