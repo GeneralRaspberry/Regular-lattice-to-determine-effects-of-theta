@@ -267,11 +267,36 @@ data_log<-data.frame(par_data_logistic)
 
 
 ## prepare a logistic function of r to fit
-temp <- filter(data_log, infected < hosts)
+temp <- filter(data_log, infected <= (hosts/2))
 #temp$simdigit<-as.numeric(temp$sim)
 
+###############################linear regression#####################################################################
+
+temp$ln<-log(temp$infected)
+rloop<-c()
+betaloop<-c()
+for (f in unique(temp$beta)){
+ lmoutput<-lm(formula=infected~time,data=filter(temp,beta==f))
+lmoutput1<-lmoutput$coefficients[2]
+lmoutputtransform<-exp(lmoutput1)
+rloop<-c(rloop,lmoutputtransform)
+betaloop<-c(betaloop,f)
+}
+rdata<-data.frame(r=(rloop-1),beta=betaloop,incidence=((rloop-1)/hosts))
+
+ggplot(temp)+geom_line(aes(x=time,y=ln,group=interaction(beta,sim),colour=as.factor(beta)))+
+  geom_line(data=rdata,aes(x=time))
 
 
+predstore1<-c()
+for (s in unique(rdata$r)){
+  calstore1<-logis(r=s, t=times, K=hosts, q0=1)
+  predstore1<-c(predstore1,calstore1)
+}  
+pred_data1 <- data.frame(time=rep(times,length(rdataparvector$beta)), infected=predstore1,beta=rep(rdataparvector$beta,each=length(times)))
+
+
+#################################################################################################
 logis <- function(t, r, K=1, s=0, q0){
   pmin(
     K*q0*exp(r*(t+s)) / (K + q0*(exp(r*(t+s)) - 1)),
@@ -319,14 +344,15 @@ for (s in unique(rdataparvector$r_mean)){
 }  
 pred_data <- data.frame(time=rep(times,length(rdataparvector$beta)), infected=predstore,beta=rep(rdataparvector$beta,each=length(times)))
 
-ggplot(data_log) + geom_line(aes(x=time, y=infected/hosts, group=interaction(data_log$beta,data_log$sim),colour=as.factor(data_log$beta)), size=.2) +
-  geom_line(data=filter(pred_data, infected<hosts), aes(x=time, y=infected/hosts, group=pred_data$beta, colour=as.factor(pred_data$beta)), size=2)+
+ggplot(data_log) + geom_line(aes(x=time, y=(infected/hosts), group=interaction(data_log$beta,data_log$sim),colour=as.factor(data_log$beta)), size=.2) +
+  geom_line(data=filter(pred_data, infected<hosts), aes(x=time, y=(infected/hosts), group=pred_data$beta, colour=as.factor(pred_data$beta)), size=2)+
   #ggtitle(paste0("Figure check"))+
+  geom_line(data=filter(pred_data1, infected<hosts), aes(x=time, y=(infected/hosts), group=pred_data1$beta, colour=as.factor(pred_data$beta)), size=5)+
   theme_tufte()+
   labs(x="Time",
        y="Prevalence",
        colour="Beta")#+
-  scale_colour_manual(values=colours)
+ # scale_colour_manual(values=colours)
   #xlim(0,10000) #+
   #annotate(parse=T, geom="text",label=beta_an, x = 1000, y = .2) +
   # annotate(parse=T, geom="text", label=theta_an, x= 1000, y = .3) +
