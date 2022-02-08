@@ -111,11 +111,12 @@ lambdaDaughter<-25
 randmod<-0
 
 tempbind<-c()
+
 sim_par <- function(i=NULL){
-for (l in 1:(length(betavalues)*iter)){
-  print(l)
-  
 for (j in betavalues){
+#for (l in 1:(length(betavalues)*iter)){
+ # print(l)
+#l<-1  
 
 rExt=radiusCluster; #extension parameter -- use cluster radius
 xDeltaExt=dim+rExt;
@@ -199,17 +200,17 @@ output <- tauLeapG(beta = j, theta = theta, b = b,
                    ppp = landscape2)
 
 temp <- output[[2]][,1:2][order(output[[2]][,2]),]
-temp<-cbind(temp,beta=j,sim=l)
+temp<-cbind(temp,beta=j)#,sim=l)
 tempbind<-rbind(tempbind,temp)
-l<-l+1
+#l<-l+1
 }
-}
 
-datatest1<-data.frame(time=tempbind$time, who=tempbind$who, x=landscape2$x[tempbind$who], y=landscape2$y[tempbind$who],beta=tempbind$beta,sim=tempbind$sim)
-
-
+datatest1<-data.frame(time=tempbind$time, who=tempbind$who, x=landscape2$x[tempbind$who], y=landscape2$y[tempbind$who],beta=tempbind$beta)#,sim=tempbind$sim)
 
 }
+
+
+#}
 
 
 
@@ -222,11 +223,20 @@ clusterCall(cl,function() library("tidyverse"))
 ## export all to the nodes, that's dirty, so run this with a clean environement otherwise your memory will be flooded
 clusterExport(cl=cl, varlist=ls())
 ## call the function in a parallel lapply
-par_results <- parLapply(1, fun=sim_par, cl=cl) ## test with 10 first, but then replace 10 by 1000
+par_results <- parLapply(1:iter, fun=sim_par, cl=cl) ## test with 10 first, but then replace 10 by 1000
+clusterEvalQ(cl,sim_par)
+#simtest<-clusterSplit(cl,seq=1:(iter*length(betavalues)))
+#par_results<-cbind(par_results,simtest)
 ## stop the cluster
 stopCluster(cl)
 ## call cbind on your list of lines to find the matrix you expect
 data <- do.call("rbind", par_results)
+
+simtest2<-rep((1:(iter*length(betavalues))),hosts)
+simtest2<-simtest2[order(simtest2)]
+
+data<-cbind(data,sim=simtest2)
+
 
 
 ##################################add a timer############################################################
@@ -240,11 +250,11 @@ head(data)
 data<-data.frame(data)
 times <- sort(unique(data$time))
 
-tapply(data$beta,data$sim,unique)
+
 
 data_logistic <- function(i=NULL){
   data  %>% group_by(sim) %>%
-    do(data.frame(time=times, infected=sapply(times, function(x) sum(.$time <= x))))
+    do(data.frame(beta=sample(.$beta,size = length(times)), time=times, infected=sapply(times, function(x) sum(.$time <= x))))
 }
 ## make a logistic df from this data
 cl <- makeCluster(mc <- getOption("cl.cores", 3))
@@ -258,7 +268,7 @@ data_log<-data.frame(par_data_logistic)
 
 ## prepare a logistic function of r to fit
 temp <- filter(data_log, infected < 1000)
-temp$simdigit<-as.numeric(temp$sim)
+#temp$simdigit<-as.numeric(temp$sim)
 
 logis <- function(t, r, K=1, s=0, q0){
   pmin(
@@ -273,10 +283,9 @@ r_calculate<-function(i=NULL){
     sum((logis(r=r, t=df$time, K=1000, q0=1) - df$infected)^2) ## sum of square errors between predictions and observations
   }
   
-  # sapply(unique(temp$sim), 
-  #               function(i) optimize(f = eval, interval = c(0, 0.5), df=filter(temp, sim==i))$minimum)
-  r <- sapply(unique(temp), 
-              function(i) optimize(f = eval, interval = c(0, .05), df=filter(temp, sim==i))$minimum)
+  r<- sapply(unique(temp$sim), 
+                 function(i) optimize(f = eval, interval = c(0, 0.01), df=filter(temp, sim==i))$minimum)
+  #r <- optimize(f = eval, interval = c(0, .01), df=filter(data_log, sim==1))$minimum
 }
 #another cluster
 cl <- makeCluster(mc <- getOption("cl.cores", 3))
@@ -285,6 +294,26 @@ clusterExport(cl=cl, varlist=c("temp","logis"),envir = environment())
 par_r<-parLapply(1,fun=r_calculate,cl=cl)
 stopCluster(cl)
 
+mean_r<-mean(unlist(par_r))
+
+############################################################################################################
+beta_an<-paste("beta ==", beta)
+theta_an<-paste("theta ==", theta)
+r_an<-paste("r ==", round(mean_r,4))
+l_an<-paste("LRF ==", randmod)
+temptimemax<-temp%>%filter(infected<999)%>%filter(time==max(time))
+temptimemax<-temptimemax[,"time"]
+pred_data <- data.frame(time=times, infected=logis(r=mean_r, t=times, K=hosts, q0=1))
+ggplot(data_log) + geom_line(aes(x=time, y=infected/hosts, group=sim), size=.2,colour="gray70") +
+  geom_line(data=filter(pred_data, infected<1000), aes(x=time, y=infected/hosts), colour="red", size=1)+
+  #ggtitle(paste0("Figure check"))+
+  theme_tufte()+xlim(0,3650) +
+  #annotate(parse=T, geom="text",label=beta_an, x = 1000, y = .2) +
+  # annotate(parse=T, geom="text", label=theta_an, x= 1000, y = .3) +
+  #annotate(parse=T, geom= "text", label=r_an, x = 1000, y = .1)+
+  #annotate(parse=T, geom= "text", label=l_an, x = 400, y = .4)+
+  ylab("Prevalence") +
+  xlab("Time") 
 
 
 
