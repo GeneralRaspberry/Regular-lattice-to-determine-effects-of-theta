@@ -267,8 +267,10 @@ data_log<-data.frame(par_data_logistic)
 
 
 ## prepare a logistic function of r to fit
-temp <- filter(data_log, infected < 1000)
+temp <- filter(data_log, infected < hosts)
 #temp$simdigit<-as.numeric(temp$sim)
+
+
 
 logis <- function(t, r, K=1, s=0, q0){
   pmin(
@@ -276,44 +278,62 @@ logis <- function(t, r, K=1, s=0, q0){
     K) # numerical errors can happen for high r and sigma
 }
 
-
+rloop<-c()
+betaloop<-c()
 r_calculate<-function(i=NULL){
-  
+  for (f in unique(temp$beta)){
   eval <- function(r, df){
-    sum((logis(r=r, t=df$time, K=1000, q0=1) - df$infected)^2) ## sum of square errors between predictions and observations
+    sum((logis(r=r, t=df$time, K=hosts, q0=infbegin) - df$infected)^2) ## sum of square errors between predictions and observations
   }
   
+
   r<- sapply(unique(temp$sim), 
                  function(i) optimize(f = eval, interval = c(0, 0.01), df=filter(temp, sim==i))$minimum)
-  #r <- optimize(f = eval, interval = c(0, .01), df=filter(data_log, sim==1))$minimum
+ 
+  rloop<-c(rloop,r)
+  betaloop<-c(betaloop,f)
+   #r <- optimize(f = eval, interval = c(0, .01), df=filter(data_log, sim==1))$minimum
+}
+  rdata<-data.frame(r=rloop,beta=betaloop)
 }
 #another cluster
 cl <- makeCluster(mc <- getOption("cl.cores", 3))
 clusterCall(cl,function() library("dplyr"))
-clusterExport(cl=cl, varlist=c("temp","logis"),envir = environment())
+clusterExport(cl=cl, varlist=c("temp","logis","hosts","infbegin","rloop","betaloop"),envir = environment())
 par_r<-parLapply(1,fun=r_calculate,cl=cl)
 stopCluster(cl)
 
-mean_r<-mean(unlist(par_r))
-
+rdatapar <- do.call("rbind", par_r)
+rdataparvector<-rdatapar%>%group_by(beta)%>%summarise_at(vars(r),list(r_mean = mean))
 ############################################################################################################
-beta_an<-paste("beta ==", beta)
-theta_an<-paste("theta ==", theta)
-r_an<-paste("r ==", round(mean_r,4))
-l_an<-paste("LRF ==", randmod)
-temptimemax<-temp%>%filter(infected<999)%>%filter(time==max(time))
-temptimemax<-temptimemax[,"time"]
-pred_data <- data.frame(time=times, infected=logis(r=mean_r, t=times, K=hosts, q0=1))
-ggplot(data_log) + geom_line(aes(x=time, y=infected/hosts, group=sim), size=.2,colour="gray70") +
-  geom_line(data=filter(pred_data, infected<1000), aes(x=time, y=infected/hosts), colour="red", size=1)+
+#beta_an<-paste("beta ==", beta)
+#theta_an<-paste("theta ==", theta)
+#r_an<-paste("r ==", round(mean_r,4))
+#l_an<-paste("LRF ==", randmod)
+#temptimemax<-temp%>%filter(infected<999)%>%filter(time==max(time))
+#temptimemax<-temptimemax[,"time"]
+predstore<-c()
+for (s in unique(rdataparvector$r_mean)){
+  calstore<-logis(r=s, t=times, K=hosts, q0=1)
+  predstore<-c(predstore,calstore)
+}  
+pred_data <- data.frame(time=rep(times,length(rdataparvector$beta)), infected=predstore,beta=rep(rdataparvector$beta,each=length(times)))
+
+ggplot(data_log) + geom_line(aes(x=time, y=infected/hosts, group=interaction(data_log$beta,data_log$sim),colour=as.factor(data_log$beta)), size=.2) +
+  geom_line(data=filter(pred_data, infected<hosts), aes(x=time, y=infected/hosts, group=pred_data$beta, colour=as.factor(pred_data$beta)), size=2)+
   #ggtitle(paste0("Figure check"))+
-  theme_tufte()+xlim(0,3650) +
+  theme_tufte()+
+  labs(x="Time",
+       y="Prevalence",
+       colour="Beta")#+
+  scale_colour_manual(values=colours)
+  #xlim(0,10000) #+
   #annotate(parse=T, geom="text",label=beta_an, x = 1000, y = .2) +
   # annotate(parse=T, geom="text", label=theta_an, x= 1000, y = .3) +
   #annotate(parse=T, geom= "text", label=r_an, x = 1000, y = .1)+
   #annotate(parse=T, geom= "text", label=l_an, x = 400, y = .4)+
-  ylab("Prevalence") +
-  xlab("Time") 
+  #ylab("Prevalence") +
+  #xlab("Time") 
 
 
 
